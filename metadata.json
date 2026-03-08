@@ -1,5 +1,7 @@
 {
-  "name": "Patient Voice Intake",
+  "name": "MedTriage",
   "description": "AI-powered medical triage assistant for GP surgeries. Processes patient voice memos to extract clinical intent and categorize urgency.",
-  "requestFramePermissions": ["microphone"]
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
