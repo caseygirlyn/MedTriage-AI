@@ -77,7 +77,7 @@ type View = 'patient' | 'gp';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<View>('patient');
+  const [view, setView] = useState<'patient' | 'dashboard'>('patient');
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -94,62 +94,66 @@ export default function App() {
 
   useEffect(() => {
     if (user?.role === 'gp') {
-      setView('gp');
+      setView('dashboard');
     } else {
       setView('patient');
     }
   }, [user]);
 
   useEffect(() => {
-    if (view === 'gp' && user?.role === 'gp') {
-      fetchMemos();
-    } else if (view === 'patient' && user?.role === 'patient') {
-      fetchPatientMemos();
+    if (view === 'dashboard') {
+      if (user?.role === 'gp') {
+        fetchMemos();
+      } else {
+        fetchPatientMemos();
+      }
     }
   }, [view, user]);
 
   const fetchPatientMemos = async () => {
     if (!user?.name) return;
+    setIsLoadingMemos(true);
     try {
       const response = await fetch(`/api/triage/patient/${encodeURIComponent(user.name)}`);
       const data = await response.json();
-      if (data.length > 0) {
-        const item = data[0];
-        setResult({
-          id: item.id,
-          patient_info: {
-            name: item.patient_name,
-            dob_mentioned: item.patient_dob,
-            phone_number: item.patient_phone,
-            contact_number_verified: true,
-          },
-          clinical_data: {
-            symptoms: JSON.parse(item.symptoms),
-            duration: item.duration,
-            pain_score_mentioned: null,
-          },
-          triage_logic: {
-            urgency_score: item.urgency_score.toString(),
-            triage_category: item.triage_category,
-            emergency_alert: item.emergency_alert === 1,
-            recommended_action: item.recommended_action,
-          },
-          booking_intent: {
-            preferred_time: item.preferred_time,
-            clinician_preference: item.clinician_preference,
-          },
-          ai_confidence: item.ai_confidence,
-          recording_url: item.recording_url,
-          status: item.status,
-          closure_summary: item.closure_summary,
-          closed_by: item.closed_by,
-          closed_at: item.closed_at,
-          history: item.history,
-          created_at: item.created_at,
-        });
-      }
+      
+      const mappedData = data.map((item: any) => ({
+        id: item.id,
+        patient_info: {
+          name: item.patient_name,
+          dob_mentioned: item.patient_dob,
+          phone_number: item.patient_phone,
+          contact_number_verified: true,
+        },
+        clinical_data: {
+          symptoms: JSON.parse(item.symptoms),
+          duration: item.duration,
+          pain_score_mentioned: null,
+        },
+        triage_logic: {
+          urgency_score: item.urgency_score.toString(),
+          triage_category: item.triage_category,
+          emergency_alert: item.emergency_alert === 1,
+          recommended_action: item.recommended_action,
+        },
+        booking_intent: {
+          preferred_time: item.preferred_time,
+          clinician_preference: item.clinician_preference,
+        },
+        ai_confidence: item.ai_confidence,
+        recording_url: item.recording_url,
+        status: item.status,
+        closure_summary: item.closure_summary,
+        closed_by: item.closed_by,
+        closed_at: item.closed_at,
+        history: item.history,
+        created_at: item.created_at,
+      }));
+      setAllMemos(mappedData);
     } catch (err) {
       console.error("Failed to fetch patient memos", err);
+    } finally {
+      setIsLoadingMemos(false);
     }
   };
 
@@ -276,7 +280,7 @@ export default function App() {
           const recording_url = uploadData.url;
 
           // 2. Process with AI
-          const triageData = await processTriageAudio(base64Audio, mimeType);
+          const triageData = await processTriageAudio(base64Audio, mimeType, user?.name);
           setResult(triageData);
           
           // 3. Save to backend
@@ -370,19 +374,28 @@ export default function App() {
         </div>
         
         {user.role === 'patient' && (
-          <button 
-            onClick={() => setView('patient')}
-            className={`p-3 rounded-xl transition-all ${view === 'patient' ? 'bg-sky-600/20 text-sky-400' : 'text-slate-500 hover:text-slate-300'}`}
-            title="Patient Intake"
-          >
-            <Mic className="w-6 h-6" />
-          </button>
+          <>
+            <button 
+              onClick={() => setView('patient')}
+              className={`p-3 rounded-xl transition-all ${view === 'patient' ? 'bg-sky-600/20 text-sky-400' : 'text-slate-500 hover:text-slate-300'}`}
+              title="Patient Intake"
+            >
+              <Mic className="w-6 h-6" />
+            </button>
+            <button 
+              onClick={() => setView('dashboard')}
+              className={`p-3 rounded-xl transition-all ${view === 'dashboard' ? 'bg-sky-600/20 text-sky-400' : 'text-slate-500 hover:text-slate-300'}`}
+              title="My Dashboard"
+            >
+              <LayoutDashboard className="w-6 h-6" />
+            </button>
+          </>
         )}
 
         {user.role === 'gp' && (
           <button 
-            onClick={() => setView('gp')}
-            className={`p-3 rounded-xl transition-all ${view === 'gp' ? 'bg-sky-600/20 text-sky-400' : 'text-slate-500 hover:text-slate-300'}`}
+            onClick={() => setView('dashboard')}
+            className={`p-3 rounded-xl transition-all ${view === 'dashboard' ? 'bg-sky-600/20 text-sky-400' : 'text-slate-500 hover:text-slate-300'}`}
             title="GP Dashboard"
           >
             <LayoutDashboard className="w-6 h-6" />
@@ -404,10 +417,10 @@ export default function App() {
           <header className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-                {view === 'patient' ? 'Patient Voice Intake' : 'GP Triage Dashboard'}
+                {view === 'patient' ? 'Patient Voice Intake' : user.role === 'gp' ? 'GP Triage Dashboard' : 'My Health Dashboard'}
               </h1>
               <p className="text-sm text-slate-500 font-medium">
-                {view === 'patient' ? 'Secure clinical submission for GP review' : 'Integrated with Accurx • Real-time patient prioritization'}
+                {view === 'patient' ? 'Secure clinical submission for GP review' : user.role === 'gp' ? 'Integrated with Accurx • Real-time patient prioritization' : 'Track your clinical submissions and GP feedback'}
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -587,29 +600,31 @@ export default function App() {
 
                         {/* Main Data Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Patient Info */}
-                          <div className="glass-card rounded-2xl p-6 border border-slate-200">
-                            <div className="flex items-center gap-2 mb-4">
-                              <User className="w-4 h-4 text-sky-600" />
-                              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Patient Identity</h3>
-                            </div>
-                            <div className="space-y-4">
-                              <div>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase">Full Name</p>
-                                <p className="text-lg font-bold text-slate-900">{result.patient_info.name}</p>
+                          {/* Patient Info - Only show to GP */}
+                          {user?.role === 'gp' && (
+                            <div className="glass-card rounded-2xl p-6 border border-slate-200">
+                              <div className="flex items-center gap-2 mb-4">
+                                <User className="w-4 h-4 text-sky-600" />
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Patient Identity</h3>
                               </div>
-                              <div className="flex justify-between">
+                              <div className="space-y-4">
                                 <div>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">Phone Number</p>
-                                  <p className="text-sm font-bold text-sky-600">{result.patient_info.phone_number}</p>
+                                  <p className="text-[10px] font-bold text-slate-400 uppercase">Full Name</p>
+                                  <p className="text-lg font-bold text-slate-900">{result.patient_info.name}</p>
                                 </div>
-                                <div className="text-right">
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">DOB</p>
-                                  <p className="text-sm font-medium text-slate-700">{result.patient_info.dob_mentioned || 'N/A'}</p>
+                                <div className="flex justify-between">
+                                  <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase">Phone Number</p>
+                                    <p className="text-sm font-bold text-sky-600">{result.patient_info.phone_number}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase">DOB</p>
+                                    <p className="text-sm font-medium text-slate-700">{result.patient_info.dob_mentioned || 'N/A'}</p>
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
+                          )}
 
                           {/* Clinical Data */}
                           <div className="glass-card rounded-2xl p-6 border border-slate-200">
@@ -719,7 +734,7 @@ export default function App() {
               </motion.div>
             ) : (
               <motion.div 
-                key="gp-view"
+                key="dashboard-view"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -731,7 +746,7 @@ export default function App() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
                       type="text" 
-                      placeholder="Search patients, symptoms, or phone..." 
+                      placeholder={user.role === 'gp' ? "Search patients, symptoms, or phone..." : "Search your symptoms or history..."}
                       className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20"
                     />
                   </div>
@@ -741,7 +756,7 @@ export default function App() {
                       Filter
                     </button>
                     <button 
-                      onClick={fetchMemos}
+                      onClick={user.role === 'gp' ? fetchMemos : fetchPatientMemos}
                       className="flex-1 md:flex-none px-4 py-2 bg-sky-600 text-white rounded-xl text-sm font-bold hover:bg-sky-700"
                     >
                       Refresh
@@ -757,7 +772,7 @@ export default function App() {
                         <tr className="bg-slate-50 border-bottom border-slate-200">
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Urgency</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Patient</th>
+                          {user.role === 'gp' && <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Patient</th>}
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Symptoms</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Submitted</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Action</th>
@@ -766,14 +781,14 @@ export default function App() {
                       <tbody className="divide-y divide-slate-100">
                         {isLoadingMemos ? (
                           <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center">
+                            <td colSpan={user.role === 'gp' ? 6 : 5} className="px-6 py-12 text-center">
                               <Loader2 className="w-8 h-8 text-sky-600 animate-spin mx-auto mb-2" />
                               <p className="text-sm text-slate-500">Loading triage results...</p>
                             </td>
                           </tr>
                         ) : allMemos.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center">
+                            <td colSpan={user.role === 'gp' ? 6 : 5} className="px-6 py-12 text-center">
                               <ClipboardList className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                               <p className="text-sm text-slate-500">No triage results found.</p>
                             </td>
@@ -788,12 +803,14 @@ export default function App() {
                             <td className="px-6 py-4">
                               <StatusBadge status={memo.status} />
                             </td>
-                            <td className="px-6 py-4">
-                              <div>
-                                <p className="text-sm font-bold text-slate-900">{memo.patient_info.name}</p>
-                                <p className="text-xs font-bold text-sky-600">{memo.patient_info.phone_number}</p>
-                              </div>
-                            </td>
+                            {user.role === 'gp' && (
+                              <td className="px-6 py-4">
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900">{memo.patient_info.name}</p>
+                                  <p className="text-xs font-bold text-sky-600">{memo.patient_info.phone_number}</p>
+                                </div>
+                              </td>
+                            )}
                             <td className="px-6 py-4">
                               <div className="flex flex-wrap gap-1 max-w-xs">
                                 {memo.clinical_data.symptoms.slice(0, 3).map((s, i) => (
@@ -817,7 +834,7 @@ export default function App() {
                                 <button 
                                   onClick={() => setSelectedMemo(memo)}
                                   className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all"
-                                  title="Update Status & History"
+                                  title={user.role === 'gp' ? "Update Status & History" : "View Details & History"}
                                 >
                                   <ClipboardList className="w-4 h-4" />
                                 </button>
@@ -828,13 +845,15 @@ export default function App() {
                                 >
                                   {activeAudioUrl === memo.recording_url ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                                 </button>
-                                <button 
-                                  onClick={() => memo.id && handleDelete(memo.id)}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all"
-                                  title="Delete Record"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                {user.role === 'gp' && (
+                                  <button 
+                                    onClick={() => memo.id && handleDelete(memo.id)}
+                                    className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all"
+                                    title="Delete Record"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -874,8 +893,12 @@ export default function App() {
                       >
                         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                           <div>
-                            <h3 className="text-lg font-bold text-slate-900">Update Ticket Lifecycle</h3>
-                            <p className="text-xs text-slate-500">Patient: {selectedMemo.patient_info.name}</p>
+                            <h3 className="text-lg font-bold text-slate-900">
+                              {user.role === 'gp' ? 'Update Ticket Lifecycle' : 'Ticket Details & History'}
+                            </h3>
+                            <p className="text-xs text-slate-500">
+                              {user.role === 'gp' ? `Patient: ${selectedMemo.patient_info.name}` : 'Your clinical submission details'}
+                            </p>
                           </div>
                           <button 
                             onClick={() => setSelectedMemo(null)}
@@ -886,14 +909,36 @@ export default function App() {
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                          {/* Clinical Summary for Context */}
+                          <section className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Clinical Summary</h4>
+                            <div className="space-y-3">
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase">Symptoms</p>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {selectedMemo.clinical_data.symptoms.map((s, i) => (
+                                    <span key={i} className="px-2 py-0.5 bg-white border border-slate-200 text-slate-600 rounded text-[9px] font-bold uppercase">{s}</span>
+                                  ))}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase">Recommended Action</p>
+                                <p className="text-sm font-bold text-slate-900">{selectedMemo.triage_logic.recommended_action}</p>
+                              </div>
+                            </div>
+                          </section>
                           {/* Current Status & Update */}
                           <section>
-                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Update Status</h4>
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">
+                              {user.role === 'gp' ? 'Update Status' : 'Current Status'}
+                            </h4>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                               {['Pending', 'Action Required', 'In Progress', 'Completed'].map((s) => (
                                 <button
                                   key={s}
+                                  disabled={user.role !== 'gp'}
                                   onClick={() => {
+                                    if (user.role !== 'gp') return;
                                     const notes = prompt(`Enter notes for changing status to ${s}:`);
                                     if (notes !== null) {
                                       let summary = undefined;
@@ -909,7 +954,7 @@ export default function App() {
                                     selectedMemo.status === s 
                                       ? 'border-sky-600 bg-sky-50 text-sky-700' 
                                       : 'border-slate-100 hover:border-slate-200 text-slate-500'
-                                  }`}
+                                  } ${user.role !== 'gp' ? 'cursor-default' : 'cursor-pointer'}`}
                                 >
                                   <div className={`p-2 rounded-lg ${getStatusColor(s)}`}>
                                     {s === 'Pending' && <Clock className="w-4 h-4" />}

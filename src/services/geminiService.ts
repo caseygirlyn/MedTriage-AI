@@ -62,9 +62,13 @@ OUTPUT FILTRATION:
 - Do not provide medical advice or "fluff."
 - If data is missing (e.g., Date of Birth), set the value to null.`;
 
-export async function processTriageAudio(audioBase64: string, mimeType: string) {
+export async function processTriageAudio(audioBase64: string, mimeType: string, patientNameHint?: string) {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
   
+  const prompt = patientNameHint 
+    ? `Please analyze this medical triage voice memo for patient "${patientNameHint}" and return the results in the specified JSON format.`
+    : "Please analyze this medical triage voice memo and return the results in the specified JSON format.";
+
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: [
@@ -77,7 +81,7 @@ export async function processTriageAudio(audioBase64: string, mimeType: string) 
             },
           },
           {
-            text: "Please analyze this medical triage voice memo and return the results in the specified JSON format.",
+            text: prompt,
           },
         ],
       },

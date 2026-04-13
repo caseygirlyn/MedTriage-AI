@@ -94,19 +94,73 @@ db.exec(`
   )
 `);
 
-// Seed dummy patients
+// Seed dummy data
 const seedPatients = [
   { nhs: '1234567890', name: 'Sarah Jenkins', pass: 'pass123' },
   { nhs: '9876543210', name: 'Jenny Wilson', pass: 'pass123' },
   { nhs: '5556667777', name: 'Elena Rodriguez', pass: 'pass123' }
 ];
 
-const checkPatients = db.prepare("SELECT count(*) as count FROM patients").get() as { count: number };
-if (checkPatients.count === 0) {
-  const insert = db.prepare("INSERT INTO patients (nhs_number, full_name, password) VALUES (?, ?, ?)");
-  seedPatients.forEach(p => insert.run(p.nhs, p.name, p.pass));
-  console.log("Database seeded with dummy patients.");
-}
+// Clear existing data for a fresh start
+db.exec("DELETE FROM ticket_history");
+db.exec("DELETE FROM triage_results");
+db.exec("DELETE FROM patients");
+db.exec("DELETE FROM sqlite_sequence WHERE name IN ('patients', 'triage_results', 'ticket_history')");
+
+// Seed patients
+const insertPatient = db.prepare("INSERT INTO patients (nhs_number, full_name, password) VALUES (?, ?, ?)");
+seedPatients.forEach(p => insertPatient.run(p.nhs, p.name, p.pass));
+console.log("Database seeded with fresh dummy patients.");
+
+// Seed dummy triage results
+const insertTriage = db.prepare(`
+  INSERT INTO triage_results (
+    patient_name, patient_dob, patient_phone, symptoms, duration, 
+    urgency_score, triage_category, emergency_alert, recommended_action, 
+    preferred_time, clinician_preference, ai_confidence, status, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const now = new Date();
+const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+// 1. Sarah Jenkins - Routine
+insertTriage.run(
+  'Sarah Jenkins', '1985-05-12', '07700 900123', 
+  JSON.stringify(['Earache', 'Mild fever']), '3 days', 
+  3, 'ROUTINE', 0, 'Schedule a routine GP appointment within 48 hours.', 
+  'Tomorrow morning', 'Any GP', 0.92, 'Pending', twoDaysAgo.toISOString()
+);
+
+// 2. Jenny Wilson - Urgent
+insertTriage.run(
+  'Jenny Wilson', '1992-11-20', '07700 900456', 
+  JSON.stringify(['Severe abdominal pain', 'Nausea']), '4 hours', 
+  8, 'URGENT_SAME_DAY', 0, 'Requires urgent clinical assessment today. Contact the duty doctor.', 
+  'ASAP', 'Duty Doctor', 0.88, 'Action Required', yesterday.toISOString()
+);
+
+// 3. Elena Rodriguez - Completed
+const elenaResult = insertTriage.run(
+  'Elena Rodriguez', '1978-03-15', '07700 900789', 
+  JSON.stringify(['Prescription renewal', 'Stable asthma']), 'N/A', 
+  2, 'ROUTINE', 0, 'Administrative review for prescription renewal.', 
+  'Next week', 'Dr. Smith', 0.95, 'Completed', now.toISOString()
+);
+
+// Add history for Elena's completed ticket
+const ticketId = elenaResult.lastInsertRowid;
+const insertHistory = db.prepare("INSERT INTO ticket_history (ticket_id, status, changed_by, notes) VALUES (?, ?, ?, ?)");
+insertHistory.run(ticketId, 'Pending', 'System', 'Initial submission received.');
+insertHistory.run(ticketId, 'In Progress', 'Dr. Smith', 'Reviewing asthma medication history.');
+insertHistory.run(ticketId, 'Completed', 'Dr. Smith', 'Prescription renewed and sent to pharmacy.');
+
+// Update Elena's record with closure info
+db.prepare("UPDATE triage_results SET closure_summary = ?, closed_by = ?, closed_at = ? WHERE id = ?")
+  .run('Prescription renewed and sent to Boots Pharmacy.', 'Dr. Smith', now.toISOString(), ticketId);
+
+console.log("Database seeded with fresh triage entries.");
 
 async function startServer() {
   const app = express();

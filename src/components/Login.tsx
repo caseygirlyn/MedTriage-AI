@@ -65,7 +65,7 @@ export default function Login({ onLogin }: LoginProps) {
           <div className="p-4 bg-sky-600 rounded-2xl mb-4 shadow-lg shadow-sky-200">
             <Activity className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Patient Voice Intake</h1>
+          <h1 className="text-2xl font-bold text-slate-900">MedTriage</h1>
           <p className="text-sm text-slate-500 font-medium">Clinical Intake & Triage System</p>
         </div>
 
