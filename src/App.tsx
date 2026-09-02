@@ -23,7 +23,11 @@ import {
   Play,
   Pause,
   Volume2,
-  Trash2
+  Headphones,
+  Trash2,
+  X,
+  Check,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { processTriageAudio } from './services/geminiService';
@@ -88,6 +92,21 @@ export default function App() {
   const [activeAudioUrl, setActiveAudioUrl] = useState<string | null>(null);
   const [selectedMemo, setSelectedMemo] = useState<TriageResult | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  
+  // Delete and confirmation modal state
+  const [memoToDelete, setMemoToDelete] = useState<TriageResult | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'Pending' | 'Action Required' | 'In Progress' | 'Completed'>('ALL');
+
+  // Inline Status update form state inside modal
+  const [editingStatus, setEditingStatus] = useState<'Pending' | 'Action Required' | 'In Progress' | 'Completed' | null>(null);
+  const [statusNotes, setStatusNotes] = useState('');
+  const [closureSummary, setClosureSummary] = useState('');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -203,16 +222,47 @@ export default function App() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this record?')) return;
+  const handleDeleteClick = (memo: TriageResult) => {
+    setMemoToDelete(memo);
+    setDeleteError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!memoToDelete?.id) return;
+    setIsDeleting(true);
+    setDeleteError(null);
     
     try {
-      const response = await fetch(`/api/triage/${id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/triage/${memoToDelete.id}`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      
       if (response.ok) {
-        setAllMemos(prev => prev.filter(m => m.id !== id));
+        const deletedId = memoToDelete.id;
+        const deletedAudio = memoToDelete.recording_url;
+        
+        setAllMemos(prev => prev.filter(m => m.id !== deletedId));
+        if (selectedMemo?.id === deletedId) {
+          setSelectedMemo(null);
+        }
+        if (activeAudioUrl && activeAudioUrl === deletedAudio) {
+          setActiveAudioUrl(null);
+        }
+        if (result?.id === deletedId) {
+          setResult(null);
+        }
+        
+        const patientName = memoToDelete.patient_info?.name || 'Triage record';
+        setMemoToDelete(null);
+        setToastMessage(`${patientName} was successfully deleted.`);
+        setTimeout(() => setToastMessage(null), 4000);
+      } else {
+        setDeleteError(data.message || 'Failed to delete record. Please try again.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to delete record:', err);
+      setDeleteError('Connection error while attempting to delete record.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -270,37 +320,23 @@ export default function App() {
         const mimeType = audioBlob.type || 'audio/webm';
         
         try {
-          // 1. Upload audio to server
-          const uploadResponse = await fetch('/api/upload-audio', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64Audio, mimeType }),
-          });
-          const uploadData = await uploadResponse.json();
-          const recording_url = uploadData.url;
-
-          // 2. Process with AI
+          // Process via server-side Gemini endpoint
           const triageData = await processTriageAudio(base64Audio, mimeType, user?.name);
           setResult(triageData);
-          
-          // 3. Save to backend
-          await fetch('/api/triage', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...triageData,
-              recording_url: recording_url
-            }),
-          });
-        } catch (err) {
-          console.error(err);
-          setError("Failed to process audio. Please try again.");
+          if (user?.role === 'patient') {
+            fetchPatientMemos();
+          } else if (user?.role === 'gp') {
+            fetchMemos();
+          }
+        } catch (err: any) {
+          console.error("Audio processing failed:", err);
+          setError(err?.message || "Failed to process audio. Please try again.");
         } finally {
           setIsProcessing(false);
         }
       };
-    } catch (err) {
-      setError("Error reading audio file.");
+    } catch (err: any) {
+      setError(err?.message || "Error reading audio file.");
       setIsProcessing(false);
     }
   };
@@ -331,12 +367,21 @@ export default function App() {
           status,
           notes,
           closure_summary: summary,
-          changed_by: user?.name || 'Unknown'
+          changed_by: user?.name || 'Dr. Smith'
         })
       });
       if (response.ok) {
-        await fetchMemos();
+        if (user?.role === 'gp') {
+          await fetchMemos();
+        } else {
+          await fetchPatientMemos();
+        }
         setSelectedMemo(null);
+        setEditingStatus(null);
+        setStatusNotes('');
+        setClosureSummary('');
+        setToastMessage(`Status updated to "${status}"`);
+        setTimeout(() => setToastMessage(null), 3500);
       }
     } catch (err) {
       console.error('Failed to update status:', err);
@@ -741,26 +786,59 @@ export default function App() {
                 className="space-y-6"
               >
                 {/* Dashboard Controls */}
-                <div className="flex flex-col md:flex-row gap-4 items-center justify-between glass-card p-4 rounded-2xl border border-slate-200">
-                  <div className="relative w-full md:w-96">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input 
-                      type="text" 
-                      placeholder={user.role === 'gp' ? "Search patients, symptoms, or phone..." : "Search your symptoms or history..."}
-                      className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20"
-                    />
+                <div className="glass-card p-4 rounded-2xl border border-slate-200 space-y-3">
+                  <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
+                    <div className="relative w-full md:w-96">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder={user.role === 'gp' ? "Search patient, phone, symptoms, urgency..." : "Search symptoms or action..."}
+                        className="w-full pl-10 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 text-slate-800"
+                      />
+                      {searchQuery && (
+                        <button 
+                          onClick={() => setSearchQuery('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          title="Clear search"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                      <button 
+                        onClick={user.role === 'gp' ? fetchMemos : fetchPatientMemos}
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-xl text-sm font-bold hover:bg-sky-700 transition-colors shadow-sm"
+                      >
+                        <Activity className="w-4 h-4" />
+                        Refresh
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 w-full md:w-auto">
-                    <button className="flex-1 md:flex-none flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">
-                      <Filter className="w-4 h-4" />
-                      Filter
-                    </button>
-                    <button 
-                      onClick={user.role === 'gp' ? fetchMemos : fetchPatientMemos}
-                      className="flex-1 md:flex-none px-4 py-2 bg-sky-600 text-white rounded-xl text-sm font-bold hover:bg-sky-700"
-                    >
-                      Refresh
-                    </button>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-0.5 scrollbar-none text-xs">
+                    <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px] mr-1 flex items-center gap-1">
+                      <Filter className="w-3 h-3" /> Status:
+                    </span>
+                    {(['ALL', 'Pending', 'Action Required', 'In Progress', 'Completed'] as const).map((statusKey) => (
+                      <button
+                        key={statusKey}
+                        onClick={() => setSelectedStatusFilter(statusKey)}
+                        className={`px-3 py-1 rounded-lg font-bold text-xs transition-all whitespace-nowrap ${
+                          selectedStatusFilter === statusKey
+                            ? 'bg-slate-900 text-white shadow-sm'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {statusKey}
+                        {statusKey === 'ALL' 
+                          ? ` (${allMemos.length})` 
+                          : ` (${allMemos.filter(m => m.status === statusKey).length})`}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -769,32 +847,62 @@ export default function App() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="bg-slate-50 border-bottom border-slate-200">
+                        <tr className="bg-slate-50 border-b border-slate-200">
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Urgency</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</th>
                           {user.role === 'gp' && <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Patient</th>}
+                          <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Voice Message</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Symptoms</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Submitted</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Action</th>
+                          <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {isLoadingMemos ? (
                           <tr>
-                            <td colSpan={user.role === 'gp' ? 6 : 5} className="px-6 py-12 text-center">
+                            <td colSpan={user.role === 'gp' ? 7 : 6} className="px-6 py-12 text-center">
                               <Loader2 className="w-8 h-8 text-sky-600 animate-spin mx-auto mb-2" />
-                              <p className="text-sm text-slate-500">Loading triage results...</p>
+                              <p className="text-sm text-slate-500">Loading triage records...</p>
                             </td>
                           </tr>
-                        ) : allMemos.length === 0 ? (
+                        ) : allMemos.filter(memo => {
+                            if (selectedStatusFilter !== 'ALL' && memo.status !== selectedStatusFilter) return false;
+                            if (!searchQuery.trim()) return true;
+                            const q = searchQuery.toLowerCase();
+                            const nameMatch = memo.patient_info?.name?.toLowerCase().includes(q);
+                            const phoneMatch = memo.patient_info?.phone_number?.toLowerCase().includes(q);
+                            const symptomsMatch = memo.clinical_data?.symptoms?.some(s => s.toLowerCase().includes(q));
+                            const actionMatch = memo.triage_logic?.recommended_action?.toLowerCase().includes(q);
+                            const categoryMatch = memo.triage_logic?.triage_category?.toLowerCase().includes(q);
+                            const statusMatch = memo.status?.toLowerCase().includes(q);
+                            return nameMatch || phoneMatch || symptomsMatch || actionMatch || categoryMatch || statusMatch;
+                          }).length === 0 ? (
                           <tr>
-                            <td colSpan={user.role === 'gp' ? 6 : 5} className="px-6 py-12 text-center">
+                            <td colSpan={user.role === 'gp' ? 7 : 6} className="px-6 py-12 text-center">
                               <ClipboardList className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                              <p className="text-sm text-slate-500">No triage results found.</p>
+                              <p className="text-sm font-medium text-slate-600">No triage records found</p>
+                              <p className="text-xs text-slate-400 mt-1">
+                                {searchQuery || selectedStatusFilter !== 'ALL' 
+                                  ? 'Try adjusting your search query or status filter.' 
+                                  : 'New voice triage submissions will appear here automatically.'}
+                              </p>
                             </td>
                           </tr>
-                        ) : allMemos.map((memo) => (
-                          <tr key={memo.id} className="hover:bg-slate-50/50 transition-colors group">
+                        ) : allMemos
+                            .filter(memo => {
+                              if (selectedStatusFilter !== 'ALL' && memo.status !== selectedStatusFilter) return false;
+                              if (!searchQuery.trim()) return true;
+                              const q = searchQuery.toLowerCase();
+                              const nameMatch = memo.patient_info?.name?.toLowerCase().includes(q);
+                              const phoneMatch = memo.patient_info?.phone_number?.toLowerCase().includes(q);
+                              const symptomsMatch = memo.clinical_data?.symptoms?.some(s => s.toLowerCase().includes(q));
+                              const actionMatch = memo.triage_logic?.recommended_action?.toLowerCase().includes(q);
+                              const categoryMatch = memo.triage_logic?.triage_category?.toLowerCase().includes(q);
+                              const statusMatch = memo.status?.toLowerCase().includes(q);
+                              return nameMatch || phoneMatch || symptomsMatch || actionMatch || categoryMatch || statusMatch;
+                            })
+                            .map((memo) => (
+                          <tr key={memo.id} className="hover:bg-slate-50/70 transition-colors group">
                             <td className="px-6 py-4">
                               <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-tighter ${getUrgencyBadge(memo.triage_logic.triage_category)}`}>
                                 {memo.triage_logic.triage_category.split('_')[0]}
@@ -812,6 +920,43 @@ export default function App() {
                               </td>
                             )}
                             <td className="px-6 py-4">
+                              {memo.recording_url ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveAudioUrl(activeAudioUrl === memo.recording_url ? null : memo.recording_url);
+                                  }}
+                                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                    activeAudioUrl === memo.recording_url
+                                      ? 'bg-sky-600 text-white shadow-md shadow-sky-200 ring-2 ring-sky-300'
+                                      : 'bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200/80 hover:border-sky-300'
+                                  }`}
+                                  title="Listen to original voice recording"
+                                >
+                                  {activeAudioUrl === memo.recording_url ? (
+                                    <>
+                                      <Pause className="w-3.5 h-3.5 fill-current" />
+                                      <span>Playing</span>
+                                      <span className="flex items-end gap-0.5 h-3 pl-0.5">
+                                        <span className="w-0.5 h-3 bg-white rounded-full animate-pulse" />
+                                        <span className="w-0.5 h-2 bg-white rounded-full animate-pulse [animation-delay:0.15s]" />
+                                        <span className="w-0.5 h-3.5 bg-white rounded-full animate-pulse [animation-delay:0.3s]" />
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="w-3.5 h-3.5 fill-current" />
+                                      <span>Listen</span>
+                                      <Headphones className="w-3.5 h-3.5 opacity-60" />
+                                    </>
+                                  )}
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-slate-400 italic">No audio</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4">
                               <div className="flex flex-wrap gap-1 max-w-xs">
                                 {memo.clinical_data.symptoms.slice(0, 3).map((s, i) => (
                                   <span key={i} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[9px] font-bold uppercase">{s}</span>
@@ -822,7 +967,7 @@ export default function App() {
                               </div>
                             </td>
                             <td className="px-6 py-4">
-                              <p className="text-xs text-slate-500 font-medium">
+                              <p className="text-xs text-slate-600 font-medium">
                                 {memo.created_at ? new Date(memo.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
                               </p>
                               <p className="text-[10px] text-slate-400">
@@ -830,30 +975,26 @@ export default function App() {
                               </p>
                             </td>
                             <td className="px-6 py-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center justify-end gap-1.5">
                                 <button 
-                                  onClick={() => setSelectedMemo(memo)}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all"
-                                  title={user.role === 'gp' ? "Update Status & History" : "View Details & History"}
+                                  onClick={() => {
+                                    setSelectedMemo(memo);
+                                    setEditingStatus(null);
+                                    setStatusNotes('');
+                                    setClosureSummary('');
+                                  }}
+                                  className="p-2 rounded-lg text-slate-500 hover:text-sky-600 hover:bg-sky-50 transition-all"
+                                  title={user.role === 'gp' ? "Update Status & Audit Trail" : "View Details & History"}
                                 >
                                   <ClipboardList className="w-4 h-4" />
                                 </button>
                                 <button 
-                                  onClick={() => memo.recording_url && setActiveAudioUrl(memo.recording_url)}
-                                  className={`p-2 rounded-lg transition-all ${activeAudioUrl === memo.recording_url ? 'bg-sky-600 text-white shadow-lg shadow-sky-200' : 'text-slate-400 hover:text-sky-600 hover:bg-sky-50'}`}
-                                  title="Play Recording"
+                                  onClick={() => handleDeleteClick(memo)}
+                                  className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all"
+                                  title="Delete Record"
                                 >
-                                  {activeAudioUrl === memo.recording_url ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
-                                {user.role === 'gp' && (
-                                  <button 
-                                    onClick={() => memo.id && handleDelete(memo.id)}
-                                    className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all"
-                                    title="Delete Record"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
                               </div>
                             </td>
                           </tr>
@@ -881,34 +1022,122 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Status Update Modal */}
+                {/* Status Update / Details Modal */}
                 <AnimatePresence>
                   {selectedMemo && (
                     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
                       <motion.div 
-                        initial={{ scale: 0.9, opacity: 0 }}
+                        initial={{ scale: 0.95, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0.9, opacity: 0 }}
+                        exit={{ scale: 0.95, opacity: 0 }}
                         className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
                       >
                         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                           <div>
                             <h3 className="text-lg font-bold text-slate-900">
-                              {user.role === 'gp' ? 'Update Ticket Lifecycle' : 'Ticket Details & History'}
+                              {user.role === 'gp' ? 'Ticket Lifecycle & Clinical Details' : 'Ticket Details & History'}
                             </h3>
                             <p className="text-xs text-slate-500">
-                              {user.role === 'gp' ? `Patient: ${selectedMemo.patient_info.name}` : 'Your clinical submission details'}
+                              {user.role === 'gp' ? `Patient: ${selectedMemo.patient_info.name} • ${selectedMemo.patient_info.phone_number}` : 'Your clinical submission details'}
                             </p>
                           </div>
                           <button 
-                            onClick={() => setSelectedMemo(null)}
-                            className="p-2 hover:bg-slate-200 rounded-lg transition-colors"
+                            onClick={() => {
+                              setSelectedMemo(null);
+                              setEditingStatus(null);
+                            }}
+                            className="p-2 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
                           >
-                            <Square className="w-4 h-4 text-slate-400" />
+                            <X className="w-5 h-5" />
                           </button>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                          {/* Patient Voice Recording Player */}
+                          <section className="p-4 bg-gradient-to-br from-sky-50/90 via-slate-50 to-white rounded-2xl border border-sky-100 shadow-xs space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-sky-600 text-white rounded-xl shadow-xs shadow-sky-200">
+                                  <Headphones className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-bold text-slate-900">Patient Voice Message Recording</h4>
+                                  <p className="text-[10px] text-slate-500">
+                                    {selectedMemo.recording_url ? 'Listen directly to the voice audio submitted by patient' : 'No voice recording available'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {selectedMemo.recording_url && (
+                                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-bold flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  Audio Available
+                                </span>
+                              )}
+                            </div>
+
+                            {selectedMemo.recording_url ? (
+                              <div className="p-3 bg-white rounded-xl border border-sky-100 space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (activeAudioUrl === selectedMemo.recording_url) {
+                                          setActiveAudioUrl(null);
+                                        } else {
+                                          setActiveAudioUrl(selectedMemo.recording_url);
+                                        }
+                                      }}
+                                      className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-sky-200 flex items-center gap-2"
+                                    >
+                                      {activeAudioUrl === selectedMemo.recording_url ? (
+                                        <>
+                                          <Pause className="w-4 h-4 fill-current" />
+                                          <span>Pause Audio</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="w-4 h-4 fill-current" />
+                                          <span>Play Voice Message</span>
+                                        </>
+                                      )}
+                                    </button>
+
+                                    {activeAudioUrl === selectedMemo.recording_url && (
+                                      <div className="flex items-center gap-1 text-sky-600 text-xs font-medium px-2 py-1 bg-sky-50 rounded-lg">
+                                        <span className="flex items-end gap-0.5 h-3">
+                                          <span className="w-0.5 h-3 bg-sky-600 rounded-full animate-bounce" />
+                                          <span className="w-0.5 h-1.5 bg-sky-600 rounded-full animate-bounce [animation-delay:0.15s]" />
+                                          <span className="w-0.5 h-2.5 bg-sky-600 rounded-full animate-bounce [animation-delay:0.3s]" />
+                                        </span>
+                                        <span className="text-[10px] font-bold uppercase">Playing</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <span className="text-[10px] font-mono text-slate-400">
+                                    {selectedMemo.clinical_data.duration ? `Duration: ${selectedMemo.clinical_data.duration}` : 'Original Audio'}
+                                  </span>
+                                </div>
+
+                                <audio 
+                                  controls 
+                                  src={selectedMemo.recording_url} 
+                                  className="w-full h-9 rounded-lg"
+                                  onPlay={() => setActiveAudioUrl(selectedMemo.recording_url)}
+                                  onPause={() => {
+                                    if (activeAudioUrl === selectedMemo.recording_url) setActiveAudioUrl(null);
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs text-slate-400 italic">
+                                No audio recording file attached to this ticket.
+                              </div>
+                            )}
+                          </section>
+
                           {/* Clinical Summary for Context */}
                           <section className="p-4 bg-slate-50 rounded-xl border border-slate-100">
                             <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Clinical Summary</h4>
@@ -927,65 +1156,124 @@ export default function App() {
                               </div>
                             </div>
                           </section>
-                          {/* Current Status & Update */}
+
+                          {/* Current Status & Inline Update for GP */}
                           <section>
-                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">
-                              {user.role === 'gp' ? 'Update Status' : 'Current Status'}
-                            </h4>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                              {['Pending', 'Action Required', 'In Progress', 'Completed'].map((s) => (
-                                <button
-                                  key={s}
-                                  disabled={user.role !== 'gp'}
-                                  onClick={() => {
-                                    if (user.role !== 'gp') return;
-                                    const notes = prompt(`Enter notes for changing status to ${s}:`);
-                                    if (notes !== null) {
-                                      let summary = undefined;
-                                      if (s === 'Completed') {
-                                        summary = prompt("Enter a brief closure summary for the patient (e.g., 'Advice given', 'Referred to Pharmacy'):");
-                                      }
-                                      if (selectedMemo.id) {
-                                        handleUpdateStatus(selectedMemo.id, s as any, notes, summary || undefined);
-                                      }
-                                    }
-                                  }}
-                                  className={`px-3 py-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 ${
-                                    selectedMemo.status === s 
-                                      ? 'border-sky-600 bg-sky-50 text-sky-700' 
-                                      : 'border-slate-100 hover:border-slate-200 text-slate-500'
-                                  } ${user.role !== 'gp' ? 'cursor-default' : 'cursor-pointer'}`}
-                                >
-                                  <div className={`p-2 rounded-lg ${getStatusColor(s)}`}>
-                                    {s === 'Pending' && <Clock className="w-4 h-4" />}
-                                    {s === 'Action Required' && <AlertCircle className="w-4 h-4" />}
-                                    {s === 'In Progress' && <Activity className="w-4 h-4" />}
-                                    {s === 'Completed' && <CheckCircle2 className="w-4 h-4" />}
-                                  </div>
-                                  <span className="text-[10px] font-bold uppercase">{s}</span>
-                                </button>
-                              ))}
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                {user.role === 'gp' ? 'Update Status' : 'Current Status'}
+                              </h4>
+                              <StatusBadge status={selectedMemo.status} />
                             </div>
+
+                            {user.role === 'gp' ? (
+                              <div className="space-y-4">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                  {(['Pending', 'Action Required', 'In Progress', 'Completed'] as const).map((s) => (
+                                    <button
+                                      key={s}
+                                      onClick={() => {
+                                        setEditingStatus(s);
+                                        if (s === 'Completed' && !closureSummary) {
+                                          setClosureSummary('Care advice provided; routine follow-up as required.');
+                                        }
+                                      }}
+                                      className={`px-3 py-3 rounded-xl border-2 transition-all flex flex-col items-center gap-1.5 ${
+                                        (editingStatus || selectedMemo.status) === s 
+                                          ? 'border-sky-600 bg-sky-50/80 text-sky-800' 
+                                          : 'border-slate-100 hover:border-slate-200 text-slate-500'
+                                      }`}
+                                    >
+                                      <div className={`p-1.5 rounded-lg ${getStatusColor(s)}`}>
+                                        {s === 'Pending' && <Clock className="w-3.5 h-3.5" />}
+                                        {s === 'Action Required' && <AlertCircle className="w-3.5 h-3.5" />}
+                                        {s === 'In Progress' && <Activity className="w-3.5 h-3.5" />}
+                                        {s === 'Completed' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                                      </div>
+                                      <span className="text-[10px] font-bold uppercase tracking-tight">{s}</span>
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {editingStatus && editingStatus !== selectedMemo.status && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    className="p-4 bg-sky-50/50 border border-sky-200 rounded-xl space-y-3"
+                                  >
+                                    <div>
+                                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                                        Clinical Transition Notes
+                                      </label>
+                                      <input 
+                                        type="text" 
+                                        value={statusNotes}
+                                        onChange={(e) => setStatusNotes(e.target.value)}
+                                        placeholder={`Reason for setting to ${editingStatus}...`}
+                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                                      />
+                                    </div>
+
+                                    {editingStatus === 'Completed' && (
+                                      <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                                          Patient Closure Summary
+                                        </label>
+                                        <input 
+                                          type="text" 
+                                          value={closureSummary}
+                                          onChange={(e) => setClosureSummary(e.target.value)}
+                                          placeholder="Summary outcome visible to patient..."
+                                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                                        />
+                                      </div>
+                                    )}
+
+                                    <div className="flex justify-end gap-2 pt-1">
+                                      <button 
+                                        onClick={() => setEditingStatus(null)}
+                                        className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-700"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button 
+                                        disabled={isUpdatingStatus}
+                                        onClick={() => selectedMemo.id && handleUpdateStatus(selectedMemo.id, editingStatus, statusNotes, closureSummary || undefined)}
+                                        className="px-4 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-bold hover:bg-sky-700 flex items-center gap-1.5"
+                                      >
+                                        {isUpdatingStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                        Confirm Change to {editingStatus}
+                                      </button>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                                <span className="text-xs text-slate-600 font-medium">Your request is currently {selectedMemo.status}</span>
+                                <StatusBadge status={selectedMemo.status} />
+                              </div>
+                            )}
                           </section>
 
                           {/* Audit Trail / History */}
                           <section>
-                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Audit Trail</h4>
-                            <div className="space-y-4">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Audit Trail</h4>
+                            <div className="space-y-3">
                               {selectedMemo.history && selectedMemo.history.length > 0 ? (
                                 selectedMemo.history.map((h, i) => (
-                                  <div key={i} className="flex gap-4">
+                                  <div key={i} className="flex gap-3">
                                     <div className="flex flex-col items-center">
                                       <div className={`w-2 h-2 rounded-full mt-1.5 ${i === 0 ? 'bg-sky-600' : 'bg-slate-300'}`} />
                                       {i !== selectedMemo.history!.length - 1 && <div className="w-px h-full bg-slate-100 my-1" />}
                                     </div>
-                                    <div className="flex-1 pb-4">
-                                      <div className="flex items-center justify-between mb-1">
+                                    <div className="flex-1 pb-3">
+                                      <div className="flex items-center justify-between mb-0.5">
                                         <p className="text-xs font-bold text-slate-900">Status changed to <span className="text-sky-600">{h.status}</span></p>
                                         <p className="text-[10px] text-slate-400 font-mono">{new Date(h.changed_at).toLocaleString()}</p>
                                       </div>
                                       <p className="text-xs text-slate-500 italic">"{h.notes || 'No notes provided'}"</p>
-                                      <p className="text-[10px] text-slate-400 mt-1">— {h.changed_by}</p>
+                                      <p className="text-[10px] text-slate-400 mt-0.5">— {h.changed_by}</p>
                                     </div>
                                   </div>
                                 ))
@@ -997,23 +1285,138 @@ export default function App() {
 
                           {selectedMemo.status === 'Completed' && selectedMemo.closure_summary && (
                             <section className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
-                              <h4 className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-2">Closure Summary</h4>
+                              <h4 className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Closure Summary</h4>
                               <p className="text-sm text-emerald-900 font-medium">"{selectedMemo.closure_summary}"</p>
                               <p className="text-[10px] text-emerald-600 mt-2">Closed by {selectedMemo.closed_by} on {new Date(selectedMemo.closed_at!).toLocaleDateString()}</p>
                             </section>
                           )}
                         </div>
 
-                        <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                        <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
                           <button 
-                            onClick={() => setSelectedMemo(null)}
-                            className="px-6 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-colors"
+                            onClick={() => handleDeleteClick(selectedMemo)}
+                            className="px-3.5 py-2 text-red-600 hover:bg-red-50 border border-red-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete Ticket
+                          </button>
+                          
+                          <button 
+                            onClick={() => {
+                              setSelectedMemo(null);
+                              setEditingStatus(null);
+                            }}
+                            className="px-6 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors"
                           >
                             Close
                           </button>
                         </div>
                       </motion.div>
                     </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Delete Confirmation Modal */}
+                <AnimatePresence>
+                  {memoToDelete && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+                      <motion.div 
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.95, opacity: 0 }}
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100"
+                      >
+                        <div className="p-6">
+                          <div className="flex items-center gap-3 text-red-600 mb-4">
+                            <div className="p-3 bg-red-50 rounded-xl border border-red-100">
+                              <Trash2 className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h3 className="text-base font-bold text-slate-900">Delete Triage Record</h3>
+                              <p className="text-xs text-slate-500">This action cannot be undone.</p>
+                            </div>
+                          </div>
+
+                          <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 mb-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900">{memoToDelete.patient_info?.name || 'Patient'}</span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${getUrgencyBadge(memoToDelete.triage_logic.triage_category)}`}>
+                                {memoToDelete.triage_logic.triage_category.split('_')[0]}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              Symptoms: {memoToDelete.clinical_data?.symptoms?.join(', ') || 'N/A'}
+                            </p>
+                          </div>
+
+                          {deleteError && (
+                            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-medium mb-4 flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4 shrink-0" />
+                              {deleteError}
+                            </div>
+                          )}
+
+                          <p className="text-xs text-slate-600 mb-6 leading-relaxed">
+                            Deleting this record will remove the audio recording, clinical summary, and ticket audit trail from the system.
+                          </p>
+
+                          <div className="flex items-center justify-end gap-3">
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={() => {
+                                setMemoToDelete(null);
+                                setDeleteError(null);
+                              }}
+                              className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={confirmDelete}
+                              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-2 shadow-sm shadow-red-200"
+                            >
+                              {isDeleting ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  Deleting...
+                                </>
+                              ) : (
+                                <>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Yes, Delete Record
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Floating Toast Notification */}
+                <AnimatePresence>
+                  {toastMessage && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 20 }}
+                      className="fixed bottom-6 right-6 z-[120]"
+                    >
+                      <div className="bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl flex items-center gap-2.5 text-xs font-bold border border-slate-800">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>{toastMessage}</span>
+                        <button 
+                          onClick={() => setToastMessage(null)}
+                          className="ml-2 p-1 text-slate-400 hover:text-white"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </motion.div>
                   )}
                 </AnimatePresence>
 
@@ -1026,28 +1429,47 @@ export default function App() {
                       exit={{ y: 100, opacity: 0 }}
                       className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-50"
                     >
-                      <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-slate-800 flex items-center gap-4">
-                        <div className="p-2 bg-sky-600 rounded-xl">
-                          <Volume2 className="w-5 h-5" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Now Playing</p>
-                          <p className="text-xs font-bold truncate">Patient Recording • Twilio Original</p>
-                        </div>
-                        <audio 
-                          autoPlay 
-                          controls 
-                          src={activeAudioUrl} 
-                          className="h-8 w-48 md:w-64"
-                          onEnded={() => setActiveAudioUrl(null)}
-                        />
-                        <button 
-                          onClick={() => setActiveAudioUrl(null)}
-                          className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
-                        >
-                          <Square className="w-4 h-4" />
-                        </button>
-                      </div>
+                      {(() => {
+                        const playingMemo = allMemos.find(m => m.recording_url === activeAudioUrl);
+                        return (
+                          <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-slate-800 flex items-center gap-4">
+                            <div className="p-2.5 bg-sky-600 rounded-xl shadow-md shadow-sky-500/20 shrink-0">
+                              <Volume2 className="w-5 h-5 text-white" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <p className="text-[10px] font-bold text-sky-400 uppercase tracking-widest">Now Playing Patient Memo</p>
+                                {playingMemo?.triage_logic?.triage_category && (
+                                  <span className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase ${getUrgencyBadge(playingMemo.triage_logic.triage_category)}`}>
+                                    {playingMemo.triage_logic.triage_category.split('_')[0]}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs font-bold truncate text-white">
+                                {playingMemo?.patient_info?.name || 'Patient Voice Recording'} 
+                                {playingMemo?.patient_info?.phone_number && (
+                                  <span className="text-slate-400 font-normal ml-1.5 text-[11px]">({playingMemo.patient_info.phone_number})</span>
+                                )}
+                              </p>
+                            </div>
+                            <audio 
+                              autoPlay 
+                              controls 
+                              src={activeAudioUrl} 
+                              className="h-8 w-44 sm:w-60 shrink-0"
+                              onEnded={() => setActiveAudioUrl(null)}
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => setActiveAudioUrl(null)}
+                              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors shrink-0"
+                              title="Dismiss player"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </motion.div>
                   )}
                 </AnimatePresence>

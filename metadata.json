@@ -3,5 +3,8 @@
   "description": "AI-powered medical triage assistant for GP surgeries. Processes patient voice memos to extract clinical intent and categorize urgency.",
   "requestFramePermissions": [
     "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

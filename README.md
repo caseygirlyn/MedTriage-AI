@@ -1,34 +1,36 @@
 # MedTriage AI
 
-MedTriage AI is a sophisticated, AI-powered medical triage and clinical intake system designed for UK-based GP surgeries. It streamlines the patient intake process by allowing patients to submit voice memos, which are then analyzed by advanced AI to extract clinical intent, prioritize urgency, and provide a structured dashboard for GP staff.
+MedTriage AI is an AI-powered medical triage and clinical intake system designed for UK-based GP surgeries. It streamlines the patient intake process by allowing patients to submit voice memos, which are then analyzed by advanced AI to extract clinical intent, prioritize urgency, and provide a structured dashboard for GP staff.
 
 ## 🚀 Key Features
 
 ### For Patients
-- **Voice-First Intake**: Record or upload audio memos describing symptoms and concerns.
-- **Automated Triage**: Receive immediate feedback on triage category and recommended actions.
-- **Personal Health Dashboard**: Track the status of clinical submissions in an isolated, secure environment.
-- **GP Feedback**: View closure summaries and advice directly from the clinical team.
+- **Dedicated Patient Portal Login**: Secure NHS number authentication with registration support and 1-click demo account access.
+- **Voice-First Intake**: Record live audio or upload audio memos describing symptoms and clinical concerns.
+- **Automated Triage**: Receive immediate structured feedback on triage category and recommended actions.
+- **Personal Health Dashboard**: Track the status and audit history of clinical submissions in an isolated, secure environment.
+- **GP Feedback**: View closure summaries, doctor notes, and medical advice directly from the practice clinical team.
 
 ### For GP Staff
-- **Triage Dashboard**: A real-time, prioritized list of patient submissions integrated with clinical urgency scores.
-- **Lifecycle Tracking**: Manage tickets through a full lifecycle: *Pending*, *Action Required*, *In Progress*, and *Completed*.
-- **Audit Trail**: Transparent logging of every status change, including who made the change and clinical notes.
-- **Urgency Categorization**: Automatic detection of "Red Flags" (Emergency 999) and Urgent Same-Day requirements using AI.
-- **Audio Playback**: Listen to original patient recordings for full clinical context.
+- **Dedicated GP Clinical Staff Login**: Clinical access code verification with Caldicott Principle audit notices and 1-click staff demo access.
+- **Triage Dashboard**: Real-time, prioritized list of patient submissions scored by clinical urgency.
+- **Lifecycle Tracking**: Manage triage tickets across stages: *Pending*, *Action Required*, *In Progress*, and *Completed*.
+- **Audit Trail & History**: Complete logging of every status update, timestamps, staff identity, and clinical notes.
+- **Red Flag Clinical Safety**: Immediate detection of life-threatening emergencies (Emergency 999) and urgent same-day consultations.
+- **Audio Playback**: Listen to original patient audio recordings directly within the dashboard.
 
-## 🛠 Tech Stack
+## 🛠 Architecture & Tech Stack
 
-- **Frontend**: React 19, Vite, Tailwind CSS, Framer Motion (for animations), Lucide React (icons).
-- **Backend**: Node.js, Express.
-- **Database**: SQLite (via `better-sqlite3`) for robust, local data persistence.
-- **AI Engine**: Google Gemini 2.5 Flash (via `@google/genai`) for high-accuracy medical audio analysis.
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Framer Motion, Lucide React icons.
+- **Backend Service**: Express.js server providing server-side API proxying and security.
+- **Database**: SQLite (via `better-sqlite3`) with schema migrations for tickets, patients, and lifecycle history.
+- **AI Audio Processing**: Server-side Google Gemini (`@google/genai`) using structured JSON schema with resilient model fallback (`gemini-3.6-flash` → `gemini-3.7-flash` → `gemini-2.5-pro`) and retry mechanisms against high-demand conditions.
 
 ## 🚦 Getting Started
 
 ### Prerequisites
 - Node.js installed.
-- A Google Gemini API Key (set as `GEMINI_API_KEY` in your environment).
+- A Google Gemini API Key configured in your environment or Google AI Studio settings (`GEMINI_API_KEY`).
 
 ### Installation
 1. Install dependencies:
@@ -41,21 +43,26 @@ MedTriage AI is a sophisticated, AI-powered medical triage and clinical intake s
    npm run dev
    ```
 
-## 🔐 Security & Standards
-- **Role-Based Access Control (RBAC)**: Strict separation between Patient and GP views.
-- **Patient Isolation**: Patients can only access their own clinical history.
-- **Clinical Safety**: Built-in "Red Flag" detection logic to escalate life-threatening symptoms immediately.
-- **NHS Digital Standards**: Designed with UK GP triage protocols in mind.
+3. Build for production:
+   ```bash
+   npm run build
+   ```
+
+## 🔐 Security & Clinical Standards
+- **Role-Based Access Control (RBAC)**: Distinct access scopes and dashboards for patients vs. GP staff.
+- **Patient Isolation**: Patients only access their own clinical history and submissions.
+- **Server-Side AI Proxy**: API keys are securely protected server-side and never exposed to the client.
+- **Clinical Safety Protocol**: Built-in red-flag safety checks for chest pain, acute respiratory distress, severe bleeding, neurological signs, and crisis indications.
 
 ## 🧪 Demo Accounts
 
-### Patient Access
-- **Sarah Jenkins**: NHS `1234567890` / Password `pass123`
-- **Jenny Wilson**: NHS `9876543210` / Password `pass123`
-- **Elena Rodriguez**: NHS `5556667777` / Password `pass123`
+### Patient Logins
+- **Sarah Jenkins**: NHS `1234567890` / Password `pass123` (Pending routine earache submission)
+- **Jenny Wilson**: NHS `9876543210` / Password `pass123` (Action required urgent submission)
+- **Elena Rodriguez**: NHS `5556667777` / Password `pass123` (Completed prescription renewal with doctor closure notes)
 
-### GP Staff Access
+### GP Staff Login
 - **Access Code**: `gp123`
 
 ---
-*Disclaimer: This is an AI-assisted triage tool. It is designed to support clinical decision-making, not replace professional medical judgment.*
+*Disclaimer: This tool is an AI clinical intake assistant designed to support workflow efficiency and GP prioritization. It does not replace independent professional medical judgment.*
